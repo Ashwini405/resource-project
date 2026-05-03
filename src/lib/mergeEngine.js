@@ -1,64 +1,48 @@
 import * as XLSX from "xlsx";
 
 /**
- * Normalizes a name string for fuzzy matching
+ * Normalizes a name string for exact matching
  * - Lowercases
- * - Removes non-alphanumeric characters (except spaces)
- * - Trims
- * - Removes extra spaces
+ * - Trims leading/trailing spaces
+ * - Replaces multiple spaces with single space
  */
 export const normalizeName = (name) => {
   if (!name || typeof name !== "string") return "";
-  return name
-    .toLowerCase()
-    .replace(/[^\w\s]/gi, "")
-    .trim()
-    .replace(/\s+/g, " ");
+  return name.toLowerCase().trim().replace(/\s+/g, " ");
 };
 
-/**
- * Normalizes an ID string for exact matching
- */
-export const normalizeId = (id) => {
-  if (!id) return "";
-  return String(id).toLowerCase().trim();
+const standardizeData = (data, mapping) => {
+  return data.map(row => {
+    let rawName = "";
+    const keys = Object.keys(row);
+    
+    let firstNameKey = keys.find(k => k.trim().toLowerCase() === "first name" || k.trim().toLowerCase() === "firstname");
+    let lastNameKey = keys.find(k => k.trim().toLowerCase() === "last name" || k.trim().toLowerCase() === "lastname");
+    
+    // Check for common full name columns, prioritizing explicit "name" columns over just "employee"
+    let fullNameKey = keys.find(k => {
+      const lower = k.trim().toLowerCase();
+      return ["full name", "fullname", "name", "employee name", "staff name", "resource name"].includes(lower);
+    }) || keys.find(k => k.trim().toLowerCase() === "employee");
+
+    if (firstNameKey && lastNameKey) {
+      rawName = `${row[firstNameKey] || ""} ${row[lastNameKey] || ""}`.trim();
+      row["FULL_NAME"] = rawName;
+    } else if (fullNameKey) {
+      rawName = row[fullNameKey];
+    } else if (mapping && mapping.nameKey && row[mapping.nameKey]) {
+      rawName = row[mapping.nameKey];
+    }
+
+    const normalized_name = normalizeName(String(rawName || ""));
+
+    return {
+      fullName: normalized_name,
+      ...row
+    };
+  });
 };
 
-/**
- * Compares two normalized names
- * Supports exact match, sorted word match, and subset match.
- * Returns { isMatch: boolean, reason: string }
- */
-export const compareNames = (name1, name2) => {
-  if (!name1 || !name2) return { isMatch: false, reason: "Missing Name" };
-
-  if (name1 === name2) {
-    return { isMatch: true, reason: "Exact Match" };
-  }
-
-  const words1 = name1.split(" ");
-  const words2 = name2.split(" ");
-  const sorted1 = [...words1].sort().join(" ");
-  const sorted2 = [...words2].sort().join(" ");
-  
-  if (sorted1 === sorted2) {
-    return { isMatch: true, reason: "Sorted Words Match" };
-  }
-
-  const isSubset = (subset, superset) => subset.every(w => superset.includes(w));
-  
-  if (words1.length >= 2 && words1.length < words2.length) {
-    if (isSubset(words1, words2)) return { isMatch: true, reason: "Partial Match (File 1 name is subset)" };
-  } else if (words2.length >= 2 && words2.length < words1.length) {
-    if (isSubset(words2, words1)) return { isMatch: true, reason: "Partial Match (Other file name is subset)" };
-  }
-
-  return { isMatch: false, reason: "No Match" };
-};
-
-/**
- * Dynamically converts an Excel File object to a JSON array
- */
 export const parseExcelFile = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -69,8 +53,39 @@ export const parseExcelFile = (file) => {
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
         
-        // defval: "" ensures missing cells are populated with empty strings instead of being omitted
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+        // 1. Read sheet as array of arrays to find the real header row
+        const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false });
+        
+        if (rawData.length === 0) {
+          resolve([]);
+          return;
+        }
+
+        // 2. Identify the header row by finding the FIRST row with a significant number of columns
+        // This handles metadata rows at the top while avoiding skipping headers if one or two column names are missing
+        let headerRowIndex = 0;
+        let maxCols = 0;
+        const colsPerRow = [];
+
+        // Check the first 20 rows to find the maximum columns
+        for (let i = 0; i < Math.min(20, rawData.length); i++) {
+          const row = rawData[i];
+          const filledCols = row.filter(cell => cell !== null && cell !== undefined && String(cell).trim() !== "").length;
+          colsPerRow.push(filledCols);
+          if (filledCols > maxCols) maxCols = filledCols;
+        }
+
+        // The header row is the first row that has at least 80% of the max columns (and > 1 column)
+        const threshold = maxCols * 0.8;
+        for (let i = 0; i < colsPerRow.length; i++) {
+          if (colsPerRow[i] >= threshold && colsPerRow[i] > 1) {
+            headerRowIndex = i;
+            break;
+          }
+        }
+        
+        // 3. Parse properly starting from the detected header row
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "", raw: false });
         resolve(jsonData);
       } catch (error) {
         reject(error);
@@ -81,133 +96,66 @@ export const parseExcelFile = (file) => {
   });
 };
 
-/**
- * Core engine to merge 3 arrays of objects accurately
- * Uses ID Match -> Name Match strategy
- */
 export const processAndMerge = (data1, data2, data3, mappings) => {
+  const stdData1 = standardizeData(data1, mappings?.file1);
+  const stdData2 = standardizeData(data2, mappings?.file2);
+  const stdData3 = standardizeData(data3, mappings?.file3);
+
+  const map2 = new Map();
+  const headers2 = new Set();
+  stdData2.forEach(row => {
+    Object.keys(row).forEach(k => headers2.add(k));
+    if (row.fullName && !map2.has(row.fullName)) {
+      map2.set(row.fullName, row);
+    }
+  });
+
+  const map3 = new Map();
+  const headers3 = new Set();
+  stdData3.forEach(row => {
+    Object.keys(row).forEach(k => headers3.add(k));
+    if (row.fullName && !map3.has(row.fullName)) {
+      map3.set(row.fullName, row);
+    }
+  });
+
+  const emptyRow2 = Array.from(headers2).reduce((acc, key) => {
+    if (key !== "fullName") acc[key] = "";
+    return acc;
+  }, {});
+  
+  const emptyRow3 = Array.from(headers3).reduce((acc, key) => {
+    if (key !== "fullName") acc[key] = "";
+    return acc;
+  }, {});
+
   let mergedData = [];
-  let unmatchedData = [];
+  
+  stdData1.forEach(row1 => {
+    const row2 = map2.get(row1.fullName) || {};
+    const row3 = map3.get(row1.fullName) || {};
 
-  // Iterate over the primary file (data1)
-  data1.forEach((row1) => {
-    let matchType = "Unmatched";
-    let matchedRows2 = [];
-    let matchedRows3 = [];
-    let matchDetails = {
-      file2Reason: "Not matched",
-      file3Reason: "Not matched",
-      file2MatchedVal: null,
-      file3MatchedVal: null
-    };
+    const { fullName: fn1, ...file1Data } = row1;
+    const { fullName: fn2, ...file2Data } = row2;
+    const { fullName: fn3, ...file3Data } = row3;
 
-    const id1 = mappings?.file1?.idKey && row1[mappings.file1.idKey] 
-      ? normalizeId(row1[mappings.file1.idKey]) : null;
-    const name1 = mappings?.file1?.nameKey && row1[mappings.file1.nameKey] 
-      ? normalizeName(row1[mappings.file1.nameKey]) : null;
-
-    // --- STEP 1: ID Match ---
-    if (id1) {
-      if (mappings?.file2?.idKey) {
-        matchedRows2 = data2.filter(r => normalizeId(r[mappings.file2.idKey]) === id1);
-        if (matchedRows2.length > 0) {
-          matchDetails.file2Reason = `ID Match (${id1})`;
-          matchDetails.file2MatchedVal = matchedRows2.length === 1 ? id1 : "Multiple IDs found";
-        }
-      }
-      if (mappings?.file3?.idKey) {
-        matchedRows3 = data3.filter(r => normalizeId(r[mappings.file3.idKey]) === id1);
-        if (matchedRows3.length > 0) {
-          matchDetails.file3Reason = `ID Match (${id1})`;
-          matchDetails.file3MatchedVal = matchedRows3.length === 1 ? id1 : "Multiple IDs found";
-        }
-      }
-      
-      if (matchedRows2.length > 0 || matchedRows3.length > 0) {
-        matchType = "ID Match";
-      }
-    }
-
-    // --- STEP 2: Name Match (If ID match failed or IDs don't exist) ---
-    if (matchType === "Unmatched" && name1) {
-      if (mappings?.file2?.nameKey) {
-        const potentialMatches = data2.map(r => {
-          const n2 = normalizeName(r[mappings.file2.nameKey]);
-          const comp = compareNames(name1, n2);
-          return { row: r, n2, ...comp };
-        }).filter(m => m.isMatch);
-        
-        matchedRows2 = potentialMatches.map(m => m.row);
-        if (matchedRows2.length > 0) {
-          matchDetails.file2Reason = `Name Match [${potentialMatches[0].reason}]`;
-          matchDetails.file2MatchedVal = potentialMatches.length === 1 ? potentialMatches[0].n2 : "Multiple names found";
-        }
-      }
-
-      if (mappings?.file3?.nameKey) {
-        const potentialMatches = data3.map(r => {
-          const n3 = normalizeName(r[mappings.file3.nameKey]);
-          const comp = compareNames(name1, n3);
-          return { row: r, n3, ...comp };
-        }).filter(m => m.isMatch);
-        
-        matchedRows3 = potentialMatches.map(m => m.row);
-        if (matchedRows3.length > 0) {
-          matchDetails.file3Reason = `Name Match [${potentialMatches[0].reason}]`;
-          matchDetails.file3MatchedVal = potentialMatches.length === 1 ? potentialMatches[0].n3 : "Multiple names found";
-        }
-      }
-
-      if (matchedRows2.length > 0 || matchedRows3.length > 0) {
-        matchType = "Name Match";
-      }
-    }
-
-    // --- STEP 3: Conflict Detection ---
-    if (matchedRows2.length > 1 || matchedRows3.length > 1) {
-      matchType = "Conflict";
-    }
-
-    let finalRow2 = {};
-    let finalRow3 = {};
-
-    // If it's a conflict, we DO NOT force a merge to maintain accuracy.
-    if (matchType !== "Conflict") {
-      if (matchedRows2.length === 1) finalRow2 = matchedRows2[0];
-      if (matchedRows3.length === 1) finalRow3 = matchedRows3[0];
-    }
-
-    // --- Combine Data ---
     const mergedRow = {
-      ...row1,
-      ...finalRow2,
-      ...finalRow3,
-      matchType,
+      ...file1Data,
+      ...emptyRow2,
+      ...file2Data,
+      ...emptyRow3,
+      ...file3Data,
       _sourceId: Math.random().toString(36).substr(2, 9),
-      _matchDetails: {
-        idSearched: id1,
-        nameSearched: name1,
-        ...matchDetails
-      }
     };
-
-    if (matchType === "Unmatched" || matchType === "Conflict") {
-      unmatchedData.push(mergedRow);
-    }
     
     mergedData.push(mergedRow);
   });
 
-  return { mergedData, unmatchedData };
+  return { mergedData, unmatchedData: [] };
 };
 
-/**
- * Utility to export JSON array back to Excel
- */
 export const exportToExcel = (data, filename = "Exported_Data.xlsx") => {
-  // Remove the internal _sourceId before exporting
   const cleanData = data.map(({ _sourceId, ...rest }) => rest);
-  
   const worksheet = XLSX.utils.json_to_sheet(cleanData);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Merged Data");

@@ -23,9 +23,9 @@ export function UploadFiles() {
   const [headers, setHeaders] = useState({ file1: [], file2: [], file3: [], all: [] });
 
   const [mappings, setMappings] = useState({
-    file1: { idKey: "", nameKey: "" },
-    file2: { idKey: "", nameKey: "" },
-    file3: { idKey: "", nameKey: "" },
+    file1: { nameKey: "" },
+    file2: { nameKey: "" },
+    file3: { nameKey: "" },
     reports: { hoursKey: "", statusKey: "", billingKey: "" }
   });
 
@@ -69,9 +69,9 @@ export function UploadFiles() {
       const guess = (hdrs, keywords) => hdrs.find(h => keywords.some(k => h.toLowerCase().includes(k))) || "";
       
       setMappings({
-        file1: { idKey: guess(h1, ["id", "emp"]), nameKey: guess(h1, ["name", "emp"]) },
-        file2: { idKey: guess(h2, ["id", "emp"]), nameKey: guess(h2, ["name", "emp"]) },
-        file3: { idKey: guess(h3, ["id", "emp"]), nameKey: guess(h3, ["name", "emp"]) },
+        file1: { nameKey: guess(h1, ["name", "emp"]) },
+        file2: { nameKey: guess(h2, ["name", "emp"]) },
+        file3: { nameKey: guess(h3, ["name", "emp"]) },
         reports: {
           hoursKey: guess(allHeaders, ["hour", "time"]),
           statusKey: guess(allHeaders, ["status", "state", "appr"]),
@@ -202,24 +202,14 @@ export function UploadFiles() {
                 </CardHeader>
                 <CardContent className="space-y-4 pt-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">ID Column</label>
-                    <select 
-                      className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-900 dark:text-white"
-                      value={mappings[fileKey].idKey}
-                      onChange={(e) => setMappings(prev => ({...prev, [fileKey]: { ...prev[fileKey], idKey: e.target.value }}))}
-                    >
-                      <option value="">-- Select ID Column --</option>
-                      {headers[fileKey].map(h => <option key={h} value={h}>{h}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Name Column</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Name Column (Fallback)</label>
+                    <p className="text-xs text-slate-500 mb-2">Used if automatic Name detection fails.</p>
                     <select 
                       className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-900 dark:text-white"
                       value={mappings[fileKey].nameKey}
                       onChange={(e) => setMappings(prev => ({...prev, [fileKey]: { ...prev[fileKey], nameKey: e.target.value }}))}
                     >
-                      <option value="">-- Select Name Column --</option>
+                      <option value="">-- Auto-detect --</option>
                       {headers[fileKey].map(h => <option key={h} value={h}>{h}</option>)}
                     </select>
                   </div>

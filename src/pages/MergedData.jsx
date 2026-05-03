@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, Search, Settings2, FileX, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Check, CheckCircle, AlertTriangle, AlertCircle } from "lucide-react";
+import { Download, Search, Settings2, FileX, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from "lucide-react";
 import { Card } from "../components/ui/Card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
 import { Button } from "../components/ui/Button";
@@ -12,8 +12,6 @@ export function MergedData() {
   const { state } = useMergeContext();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
-  const [matchTypeFilter, setMatchTypeFilter] = useState("All");
-  const [expandedRow, setExpandedRow] = useState(null);
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -42,7 +40,7 @@ export function MergedData() {
   // Extract all unique columns dynamically
   const allColumns = Array.from(
     new Set(mergedData.flatMap(row => Object.keys(row)))
-  ).filter(col => col !== "_sourceId" && col !== "matchType");
+  ).filter(col => col !== "_sourceId");
 
   const toggleColumn = (col) => {
     const newHidden = new Set(hiddenColumns);
@@ -52,10 +50,6 @@ export function MergedData() {
       newHidden.add(col);
     }
     setHiddenColumns(newHidden);
-  };
-
-  const toggleRow = (id) => {
-    setExpandedRow(prev => prev === id ? null : id);
   };
 
   const handleSort = (key) => {
@@ -68,10 +62,6 @@ export function MergedData() {
 
   const filteredAndSortedData = useMemo(() => {
     let data = [...mergedData];
-
-    if (matchTypeFilter !== "All") {
-      data = data.filter(r => r.matchType === matchTypeFilter);
-    }
 
     if (searchTerm) {
       const lowerSearch = searchTerm.toLowerCase();
@@ -87,11 +77,10 @@ export function MergedData() {
         const valA = a[sortConfig.key] || "";
         const valB = b[sortConfig.key] || "";
         
-        // Handle numeric sorting if possible
         const numA = Number(valA);
         const numB = Number(valB);
         
-        if (!isNaN(numA) && !isNaN(numB)) {
+        if (!isNaN(numA) && !isNaN(numB) && valA !== "" && valB !== "") {
           return sortConfig.direction === 'asc' ? numA - numB : numB - numA;
         }
 
@@ -104,23 +93,15 @@ export function MergedData() {
     }
 
     return data;
-  }, [mergedData, searchTerm, matchTypeFilter, sortConfig]);
+  }, [mergedData, searchTerm, sortConfig]);
 
-  // Pagination Logic
-  const totalPages = Math.ceil(filteredAndSortedData.length / rowsPerPage);
+  const totalPages = Math.ceil(filteredAndSortedData.length / rowsPerPage) || 1;
   const paginatedData = filteredAndSortedData.slice(
     (currentPage - 1) * rowsPerPage,
     currentPage * rowsPerPage
   );
 
   const visibleColumns = allColumns.filter(col => !hiddenColumns.has(col));
-
-  const MatchBadge = ({ type }) => {
-    if (type === "ID Match") return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"><CheckCircle className="w-3 h-3"/> ID Match</span>;
-    if (type === "Name Match") return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"><AlertTriangle className="w-3 h-3"/> Name Match</span>;
-    if (type === "Conflict") return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"><AlertCircle className="w-3 h-3"/> Conflict</span>;
-    return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"><AlertCircle className="w-3 h-3"/> Unmatched</span>;
-  };
 
   return (
     <div className="space-y-6">
@@ -145,27 +126,14 @@ export function MergedData() {
 
       <Card className="overflow-hidden">
         <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row items-center gap-4 justify-between relative">
-          <div className="flex items-center gap-4 w-full sm:w-auto">
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <Input 
-                className="pl-9 w-full" 
-                placeholder="Search..." 
-                value={searchTerm}
-                onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-              />
-            </div>
-            <select
-              className="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-white outline-none"
-              value={matchTypeFilter}
-              onChange={(e) => { setMatchTypeFilter(e.target.value); setCurrentPage(1); }}
-            >
-              <option value="All">All Records</option>
-              <option value="ID Match">ID Match Only</option>
-              <option value="Name Match">Name Match Only</option>
-              <option value="Conflict">Conflicts Only</option>
-              <option value="Unmatched">Unmatched Only</option>
-            </select>
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Input 
+              className="pl-9 w-full" 
+              placeholder="Search data..." 
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+            />
           </div>
 
           <div className="relative">
@@ -200,15 +168,9 @@ export function MergedData() {
           <Table className="relative min-w-max">
             <TableHeader className="sticky top-0 bg-slate-50 dark:bg-slate-800 z-10 shadow-sm">
               <TableRow>
-                <TableHead className="sticky left-0 bg-slate-50 dark:bg-slate-800 z-20 border-r border-slate-200 dark:border-slate-700 w-32 cursor-pointer" onClick={() => handleSort('matchType')}>
-                  <div className="flex items-center gap-1">
-                    Match Type
-                    {sortConfig.key === 'matchType' && (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-                  </div>
-                </TableHead>
                 {visibleColumns.map((col) => (
                   <TableHead key={col} className="cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50" onClick={() => handleSort(col)}>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 whitespace-nowrap">
                       {col}
                       {sortConfig.key === col && (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
                     </div>
@@ -218,52 +180,19 @@ export function MergedData() {
             </TableHeader>
             <TableBody>
               {paginatedData.map((row) => (
-                <React.Fragment key={row._sourceId}>
-                  <TableRow 
-                    className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${expandedRow === row._sourceId ? "bg-slate-50 dark:bg-slate-800/50" : ""}`}
-                    onClick={() => toggleRow(row._sourceId)}
-                  >
-                    <TableCell className="sticky left-0 bg-white dark:bg-slate-800 z-10 border-r border-slate-200 dark:border-slate-700">
-                      <MatchBadge type={row.matchType} />
+                <TableRow key={row._sourceId} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                  {visibleColumns.map((col) => (
+                    <TableCell key={col}>
+                      <span className="truncate max-w-[200px] block" title={String(row[col] || "")}>
+                        {row[col] !== undefined && row[col] !== "" ? String(row[col]) : <span className="text-slate-300 dark:text-slate-600">-</span>}
+                      </span>
                     </TableCell>
-                    {visibleColumns.map((col) => (
-                      <TableCell key={col}>
-                        <span className="truncate max-w-[200px] block" title={String(row[col] || "")}>
-                          {row[col] !== undefined && row[col] !== "" ? String(row[col]) : <span className="text-slate-300 dark:text-slate-600">-</span>}
-                        </span>
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                  {expandedRow === row._sourceId && (
-                    <TableRow className="bg-slate-50 dark:bg-slate-800/50">
-                      <TableCell colSpan={visibleColumns.length + 1} className="p-0 border-b border-slate-200 dark:border-slate-700">
-                        <div className="p-4 border-l-4 border-indigo-500 bg-white dark:bg-slate-800 m-4 rounded-r-lg shadow-sm">
-                          <h4 className="text-sm font-semibold text-slate-900 dark:text-white mb-3">Match Debug Information</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                            <div className="space-y-2">
-                              <p><span className="font-medium text-slate-500">Searched ID:</span> <span className="text-slate-700 dark:text-slate-300">{row._matchDetails?.idSearched || "N/A"}</span></p>
-                              <p><span className="font-medium text-slate-500">Searched Name:</span> <span className="text-slate-700 dark:text-slate-300">{row._matchDetails?.nameSearched || "N/A"}</span></p>
-                            </div>
-                            <div className="space-y-2">
-                              <div>
-                                <p className="font-medium text-slate-500">File 2 Status:</p>
-                                <p className="text-slate-700 dark:text-slate-300">{row._matchDetails?.file2Reason} {row._matchDetails?.file2MatchedVal && `(${row._matchDetails?.file2MatchedVal})`}</p>
-                              </div>
-                              <div>
-                                <p className="font-medium text-slate-500">File 3 Status:</p>
-                                <p className="text-slate-700 dark:text-slate-300">{row._matchDetails?.file3Reason} {row._matchDetails?.file3MatchedVal && `(${row._matchDetails?.file3MatchedVal})`}</p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </React.Fragment>
+                  ))}
+                </TableRow>
               ))}
               {paginatedData.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={visibleColumns.length + 1} className="h-32 text-center text-slate-500">
+                  <TableCell colSpan={visibleColumns.length} className="h-32 text-center text-slate-500">
                     No results found.
                   </TableCell>
                 </TableRow>
