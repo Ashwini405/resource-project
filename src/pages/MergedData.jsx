@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { useMergeContext } from "../context/MergeContext";
-import { exportToExcel } from "../lib/mergeEngine";
+import { exportToExcel, exportDetailedExcel } from "../lib/mergeEngine";
 
 export function MergedData() {
   const { state } = useMergeContext();
@@ -24,6 +24,9 @@ export function MergedData() {
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [hiddenColumns, setHiddenColumns] = useState(new Set());
 
+  // Expandable Rows
+  const [expandedRows, setExpandedRows] = useState(new Set());
+
   if (!state.isProcessed) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
@@ -37,10 +40,10 @@ export function MergedData() {
 
   const { mergedData } = state;
 
-  // Extract all unique columns dynamically
+  // Extract all unique columns dynamically (filter out internals)
   const allColumns = Array.from(
     new Set(mergedData.flatMap(row => Object.keys(row)))
-  ).filter(col => col !== "_sourceId");
+  ).filter(col => col !== "_sourceId" && col !== "_details");
 
   const toggleColumn = (col) => {
     const newHidden = new Set(hiddenColumns);
@@ -50,6 +53,13 @@ export function MergedData() {
       newHidden.add(col);
     }
     setHiddenColumns(newHidden);
+  };
+
+  const toggleRow = (id) => {
+    const newExpanded = new Set(expandedRows);
+    if (newExpanded.has(id)) newExpanded.delete(id);
+    else newExpanded.add(id);
+    setExpandedRows(newExpanded);
   };
 
   const handleSort = (key) => {
@@ -65,17 +75,38 @@ export function MergedData() {
 
     if (searchTerm) {
       const lowerSearch = searchTerm.toLowerCase();
-      data = data.filter(row => 
-        Object.values(row).some(val => 
-          String(val).toLowerCase().includes(lowerSearch)
-        )
-      );
+      data = data.filter(row => {
+        // Search main row properties (excluding internals)
+        const matchMain = Object.entries(row)
+          .filter(([key]) => key !== "_sourceId" && key !== "_details")
+          .some(([key, val]) => {
+            if (val === null || val === undefined) return false;
+            const strVal = Array.isArray(val) ? val.join(" ") : String(val);
+            return strVal.toLowerCase().includes(lowerSearch);
+          });
+        
+        if (matchMain) return true;
+
+        // Search inside the timesheet details array
+        if (row._details && Array.isArray(row._details)) {
+          return row._details.some(detailRow => 
+            Object.values(detailRow).some(val => 
+              val !== null && val !== undefined && String(val).toLowerCase().includes(lowerSearch)
+            )
+          );
+        }
+        
+        return false;
+      });
     }
 
     if (sortConfig.key) {
       data.sort((a, b) => {
-        const valA = a[sortConfig.key] || "";
-        const valB = b[sortConfig.key] || "";
+        let valA = a[sortConfig.key] || "";
+        let valB = b[sortConfig.key] || "";
+        
+        if (Array.isArray(valA)) valA = valA.join(", ");
+        if (Array.isArray(valB)) valB = valB.join(", ");
         
         const numA = Number(valA);
         const numB = Number(valB);
@@ -101,27 +132,66 @@ export function MergedData() {
     currentPage * rowsPerPage
   );
 
+  // Calculate Grand Totals
+  const grandTotalHours = useMemo(() => {
+    return filteredAndSortedData.reduce((sum, row) => sum + (Number(row["Total Hours"]) || 0), 0);
+  }, [filteredAndSortedData]);
+
+  const grandTotalAmount = useMemo(() => {
+    return filteredAndSortedData.reduce((sum, row) => sum + (Number(row["Total Amount"]) || 0), 0);
+  }, [filteredAndSortedData]);
+
   const visibleColumns = allColumns.filter(col => !hiddenColumns.has(col));
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Merged Data</h1>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Aggregated Resource Report</h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Showing {filteredAndSortedData.length} of {mergedData.length} records.
+            Showing {filteredAndSortedData.length} unique employees from {mergedData.length} records.
           </p>
         </div>
         <div className="flex items-center gap-3">
           <Button 
+            variant="outline" 
+            onClick={() => exportDetailedExcel(filteredAndSortedData, "Detailed_Timesheet_Data.xlsx")}
+            className="flex items-center gap-2 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            <Download className="w-4 h-4" />
+            Export Full Details
+          </Button>
+          <Button 
             variant="secondary" 
-            onClick={() => exportToExcel(filteredAndSortedData, "Merged_Results.xlsx")}
+            onClick={() => exportToExcel(filteredAndSortedData, "Employee_Summary_Report.xlsx")}
             className="flex items-center gap-2"
           >
             <Download className="w-4 h-4" />
-            Export View
+            Export Summary
           </Button>
         </div>
+      </div>
+
+      {/* KPI Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="p-4 bg-white dark:bg-slate-800 border-l-4 border-indigo-500 shadow-sm">
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Total Hours Logged</p>
+          <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+            {grandTotalHours.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </h3>
+        </Card>
+        <Card className="p-4 bg-white dark:bg-slate-800 border-l-4 border-emerald-500 shadow-sm">
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Total Amount</p>
+          <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+            ${grandTotalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </h3>
+        </Card>
+        <Card className="p-4 bg-white dark:bg-slate-800 border-l-4 border-amber-500 shadow-sm">
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Unique Resources</p>
+          <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+            {filteredAndSortedData.length.toLocaleString()}
+          </h3>
+        </Card>
       </div>
 
       <Card className="overflow-hidden">
@@ -130,7 +200,7 @@ export function MergedData() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <Input 
               className="pl-9 w-full" 
-              placeholder="Search data..." 
+              placeholder="Search employees, projects, managers..." 
               value={searchTerm}
               onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
             />
@@ -168,6 +238,7 @@ export function MergedData() {
           <Table className="relative min-w-max">
             <TableHeader className="sticky top-0 bg-slate-50 dark:bg-slate-800 z-10 shadow-sm">
               <TableRow>
+                <TableHead className="w-12"></TableHead>
                 {visibleColumns.map((col) => (
                   <TableHead key={col} className="cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50" onClick={() => handleSort(col)}>
                     <div className="flex items-center gap-1 whitespace-nowrap">
@@ -180,19 +251,72 @@ export function MergedData() {
             </TableHeader>
             <TableBody>
               {paginatedData.map((row) => (
-                <TableRow key={row._sourceId} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                  {visibleColumns.map((col) => (
-                    <TableCell key={col}>
-                      <span className="truncate max-w-[200px] block" title={String(row[col] || "")}>
-                        {row[col] !== undefined && row[col] !== "" ? String(row[col]) : <span className="text-slate-300 dark:text-slate-600">-</span>}
-                      </span>
+                <React.Fragment key={row._sourceId}>
+                  <TableRow className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                    <TableCell>
+                      {row._details && row._details.length > 0 && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => toggleRow(row._sourceId)} 
+                          className="h-8 w-8 p-0 hover:bg-slate-200 dark:hover:bg-slate-700"
+                        >
+                          {expandedRows.has(row._sourceId) ? <ChevronUp className="w-4 h-4 text-slate-600" /> : <ChevronDown className="w-4 h-4 text-slate-600" />}
+                        </Button>
+                      )}
                     </TableCell>
-                  ))}
-                </TableRow>
+                    {visibleColumns.map((col) => (
+                      <TableCell key={col}>
+                        <span className="truncate max-w-[250px] block" title={Array.isArray(row[col]) ? row[col].join(", ") : String(row[col] || "")}>
+                          {Array.isArray(row[col]) 
+                            ? (row[col].length > 0 ? row[col].join(", ") : <span className="text-slate-300 dark:text-slate-600">-</span>) 
+                            : (row[col] !== undefined && row[col] !== "" ? String(row[col]) : <span className="text-slate-300 dark:text-slate-600">-</span>)}
+                        </span>
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                  
+                  {expandedRows.has(row._sourceId) && row._details && row._details.length > 0 && (
+                    <TableRow className="bg-slate-50/50 dark:bg-slate-900/50">
+                      <TableCell colSpan={visibleColumns.length + 1} className="p-0 border-b-0">
+                         <div className="p-6 border-l-4 border-indigo-500 shadow-inner">
+                           <div className="flex items-center justify-between mb-4">
+                             <h4 className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                               <span className="bg-indigo-100 text-indigo-700 py-1 px-2 rounded-md text-xs">{row._details.length}</span>
+                               Timesheet Records for {row["Full Name"]}
+                             </h4>
+                           </div>
+                           <div className="overflow-x-auto bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm max-h-96">
+                             <table className="w-full text-sm text-left whitespace-nowrap">
+                               <thead className="text-xs text-slate-500 bg-slate-50 dark:bg-slate-900/80 sticky top-0 uppercase tracking-wider">
+                                 <tr>
+                                   {Object.keys(row._details[0]).filter(k => k !== "_sourceId").map(dk => (
+                                     <th key={dk} className="px-4 py-3 font-medium border-b border-slate-200 dark:border-slate-700">{dk}</th>
+                                   ))}
+                                 </tr>
+                               </thead>
+                               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                 {row._details.map((detailRow, idx) => (
+                                   <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                                     {Object.keys(row._details[0]).filter(k => k !== "_sourceId").map(dk => (
+                                       <td key={dk} className="px-4 py-2.5 text-slate-600 dark:text-slate-300 max-w-[200px] truncate" title={String(detailRow[dk] || "")}>
+                                         {detailRow[dk] !== undefined && detailRow[dk] !== "" ? String(detailRow[dk]) : <span className="text-slate-300">-</span>}
+                                       </td>
+                                     ))}
+                                   </tr>
+                                 ))}
+                               </tbody>
+                             </table>
+                           </div>
+                         </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </React.Fragment>
               ))}
               {paginatedData.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={visibleColumns.length} className="h-32 text-center text-slate-500">
+                  <TableCell colSpan={visibleColumns.length + 1} className="h-32 text-center text-slate-500">
                     No results found.
                   </TableCell>
                 </TableRow>
